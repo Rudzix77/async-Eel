@@ -7,7 +7,6 @@ from expiringdict import ExpiringDict
 from typing import Optional, Callable, Dict
 from logging import getLogger, ERROR
 from random import random
-import pkg_resources
 import socket
 import asyncio
 import json
@@ -25,7 +24,7 @@ routes = web.RouteTableDef()
 loop = asyncio.get_event_loop()
 
 # inner vars
-_eel_js_file = pkg_resources.resource_filename('eel', 'eel.js')
+_eel_js_file = os.path.join(os.path.dirname(__file__), 'eel.js')
 _eel_js = open(_eel_js_file, encoding='utf-8').read()
 _websockets = list()
 _call_return_futures: Dict[int, asyncio.Future] = ExpiringDict(max_len=5000, max_age_seconds=300)
