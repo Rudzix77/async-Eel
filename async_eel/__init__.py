@@ -208,7 +208,7 @@ async def _websocket(request: BaseRequest):
     while True:
         try:
             message = await ws.receive_json(timeout=0.1)
-            await _process_message(message, ws)
+            asyncio.create_task(_process_message(message, ws))
         except (asyncio.TimeoutError, TypeError):
             if ws.closed:
                 break
