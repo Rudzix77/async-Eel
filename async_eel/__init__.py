@@ -8,12 +8,13 @@ from typing import Optional, Callable, Dict
 from logging import getLogger, ERROR
 from random import random
 import socket
+import re as rgx
 import asyncio
 import json
 import re
 import sys
 import os
-
+import pyparsing as pp
 
 # logging
 getLogger('aiohttp').setLevel(ERROR)
@@ -83,9 +84,24 @@ def expose(name_or_function=None):
         _expose(function.__name__, function)
         return function
 
+# PyParsing grammar for parsing exposed functions in JavaScript code
+# Examples: `eel.expose(w, "func_name")`, `eel.expose(func_name)`, `eel.expose((function (e){}), "func_name")`
+EXPOSED_JS_FUNCTIONS = pp.ZeroOrMore(
+    pp.Suppress(
+        pp.SkipTo(pp.Literal('eel.expose('))
+        + pp.Literal('eel.expose(')
+        + pp.Optional(
+            pp.Or([pp.nestedExpr(), pp.Word(pp.printables, excludeChars=',')]) + pp.Literal(',')
+        )
+    )
+    + pp.Suppress(pp.Regex(r'["\']?'))
+    + pp.Word(pp.printables, excludeChars='"\')')
+    + pp.Suppress(pp.Regex(r'["\']?\s*\)')),
+)
 
-def init(path, allowed_extensions=('.js', '.html', '.txt', '.htm', '.xhtml', '.vue')):
-    global root_path, _js_functions
+def init(path, allowed_extensions=['.js', '.html', '.txt', '.htm',
+                                   '.xhtml', '.vue'], js_result_timeout=10000):
+    global root_path, _js_functions, _js_result_timeout
     root_path = _get_real_path(path)
 
     js_functions = set()
@@ -98,19 +114,21 @@ def init(path, allowed_extensions=('.js', '.html', '.txt', '.htm', '.xhtml', '.v
                 with open(os.path.join(root, name), encoding='utf-8') as file:
                     contents = file.read()
                     expose_calls = set()
-                    finder = re.findall(r'eel\.expose\(([^\)]+)\)', contents)
-                    for expose_call in finder:
-                        # If name specified in 2nd argument, strip quotes and store as function name
-                        if ',' in expose_call:
-                            expose_call = re.sub(r'["\']', '', expose_call.split(',')[1])
-                        expose_call = expose_call.strip()
+                    matches = EXPOSED_JS_FUNCTIONS.parseString(contents).asList()
+                    for expose_call in matches:
                         # Verify that function name is valid
                         msg = "eel.expose() call contains '(' or '='"
-                        assert re.findall(r'[\(=]', expose_call) == [], msg
+                        assert rgx.findall(r'[\(=]', expose_call) == [], msg
                         expose_calls.add(expose_call)
                     js_functions.update(expose_calls)
             except UnicodeDecodeError:
                 pass    # Malformed file probably
+
+    _js_functions = list(js_functions)
+    for js_function in _js_functions:
+        _mock_js_function(js_function)
+
+    _js_result_timeout = js_result_timeout
 
     _js_functions = list(js_functions)
     for js_function in _js_functions:
@@ -208,7 +226,7 @@ async def _websocket(request: BaseRequest):
     while True:
         try:
             message = await ws.receive_json(timeout=0.1)
-            asyncio.create_task(_process_message(message, ws))
+            await _process_message(message, ws)
         except (asyncio.TimeoutError, TypeError):
             if ws.closed:
                 break
